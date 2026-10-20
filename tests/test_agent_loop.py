@@ -1,67 +1,49 @@
+"""Updated tests for the agent loop — aligned with the current loop.py API."""
+
 import pytest
-from unittest.mock import MagicMock
-from agent_core.loop import dispatch_tool, sanitize_report
-from agent_core.schema import AuditReport, Violation
+from unittest.mock import patch, MagicMock
+
+from agent_core.loop import TOOL_REGISTRY
 
 
-def test_dispatch_tool_list_files(tmp_path):
-    (tmp_path / "file1.txt").write_text("hello")
-    res = dispatch_tool("list_files", {"max_depth": 2}, str(tmp_path))
-    assert not res.get("error")
-    assert "file1.txt" in res["files"]
+def test_tool_registry_contains_all_tools():
+    """All 5 expected tools must be registered in TOOL_REGISTRY."""
+    expected = {
+        "list_repo_files",
+        "read_file_content",
+        "search_code",
+        "list_commits",
+        "check_file_exists",
+    }
+    assert expected == set(TOOL_REGISTRY.keys())
 
 
-def test_dispatch_tool_unknown(tmp_path):
-    res = dispatch_tool("nonexistent_tool", {}, str(tmp_path))
-    assert "error" in res
-    assert "Unknown tool" in res["error"]
+def test_tool_registry_callables():
+    """Every registered tool must be callable."""
+    for name, fn in TOOL_REGISTRY.items():
+        assert callable(fn), f"Tool '{name}' is not callable"
 
 
-def test_sanitize_report_deduplication():
-    v1 = Violation(
-        rule_id="SEC-001",
-        category="security",
-        severity="critical",
-        file="app.py",
-        line=10,
-        description="Hardcoded password",
-        evidence="password = '***[REDACTED_SECRET]***'",
-        recommendation="Use env var"
+def test_list_repo_files_via_registry(tmp_path):
+    """list_repo_files should return a non-empty file list for a non-empty dir."""
+    (tmp_path / "main.py").write_text("print('hello')")
+    result = TOOL_REGISTRY["list_repo_files"](repo_path=str(tmp_path))
+    assert result["total"] >= 1
+    assert any("main.py" in f for f in result["files"])
+
+
+def test_check_file_exists_via_registry(tmp_path):
+    """check_file_exists should detect a file that exists."""
+    (tmp_path / ".gitignore").write_text("*.pyc")
+    result = TOOL_REGISTRY["check_file_exists"](
+        repo_path=str(tmp_path), relative_path=".gitignore"
     )
-    v2 = Violation(
-        rule_id="SEC-001",
-        category="security",
-        severity="critical",
-        file="app.py",
-        line=10,
-        description="Duplicate finding",
-        evidence="password = '***[REDACTED_SECRET]***'",
-        recommendation="Use env var"
-    )
-    report = AuditReport(
-        repository="https://github.com/test/repo",
-        violations=[v1, v2]
-    )
-    sanitized = sanitize_report(report, "https://github.com/test/repo")
-    assert len(sanitized.violations) == 1
+    assert result["exists"] is True
 
 
-def test_sanitize_report_secret_scrubbing():
-    v = Violation(
-        rule_id="SEC-001",
-        category="security",
-        severity="critical",
-        file="config.py",
-        line=5,
-        description="Found token ghp_1234567890abcdef1234567890abcdef1234",
-        evidence="api_key = 'ghp_1234567890abcdef1234567890abcdef1234'",
-        recommendation="Remove credential"
+def test_check_file_missing_via_registry(tmp_path):
+    """check_file_exists should return exists=False for missing files."""
+    result = TOOL_REGISTRY["check_file_exists"](
+        repo_path=str(tmp_path), relative_path="Dockerfile"
     )
-    report = AuditReport(
-        repository="https://github.com/test/repo",
-        violations=[v]
-    )
-    sanitized = sanitize_report(report, "https://github.com/test/repo")
-    assert "ghp_1234567890abcdef1234567890abcdef1234" not in sanitized.violations[0].description
-    assert "ghp_1234567890abcdef1234567890abcdef1234" not in sanitized.violations[0].evidence
-    assert "[REDACTED_SECRET]" in sanitized.violations[0].evidence
+    assert result["exists"] is False

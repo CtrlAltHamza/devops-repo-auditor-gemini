@@ -188,3 +188,37 @@ def check_file_exists(repo_path: str, relative_path: str) -> dict[str, Any]:
     exists = os.path.isfile(full_path)
     logger.debug(f"[tool] check_file_exists: {relative_path} -> {exists}")
     return {"path": relative_path, "exists": exists}
+
+
+# ──────────────────────────────────────────────────────────────────
+# 6. git_status
+# ──────────────────────────────────────────────────────────────────
+def git_status(repo_path: str) -> dict[str, Any]:
+    """Inspect working tree status of the cloned repository.
+
+    Identifies untracked, modified, or staged files, helping detect
+    improper repository hygiene or untracked generated artifacts.
+    """
+    logger.info(f"[tool] git_status: repo={repo_path}")
+    try:
+        cmd = ["git", "status", "--porcelain"]
+        result = subprocess.run(
+            cmd, cwd=repo_path, capture_output=True, text=True, timeout=15
+        )
+        if result.returncode != 0:
+            return {"clean": False, "changes": [], "error": result.stderr.strip()}
+
+        changes = [line.strip() for line in result.stdout.strip().splitlines() if line.strip()]
+        return {"clean": len(changes) == 0, "changes": changes, "total_changes": len(changes)}
+    except Exception as exc:
+        logger.error(f"git_status error: {exc}")
+        return {"clean": False, "changes": [], "error": str(exc)}
+
+
+# ──────────────────────────────────────────────────────────────────
+# Direct Specification Aliases
+# ──────────────────────────────────────────────────────────────────
+list_files = list_repo_files
+read_file = read_file_content
+git_log = list_commits
+

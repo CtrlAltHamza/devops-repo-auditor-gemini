@@ -1,5 +1,4 @@
-import logging
-from agent_core.logger import get_logger, SecretScrubbingFilter
+from agent_core.logger import SecretScrubbingFilter, get_logger
 
 
 def test_secret_scrubbing_github_token():

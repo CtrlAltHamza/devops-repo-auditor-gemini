@@ -1,7 +1,5 @@
 """Updated tests for the agent loop — aligned with the current loop.py API."""
 
-import pytest
-from unittest.mock import patch, MagicMock
 
 from agent_core.loop import TOOL_REGISTRY
 

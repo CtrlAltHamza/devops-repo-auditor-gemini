@@ -1,21 +1,18 @@
 """Unit tests for the inspection tools module."""
-import os
-import tempfile
 import pytest
 
 from tools import (
-    list_repo_files,
-    read_file_content,
-    search_code,
-    list_commits,
     check_file_exists,
+    git_log,
     git_status,
     inspect_github_actions,
+    list_commits,
     list_files,
+    list_repo_files,
     read_file,
-    git_log,
+    read_file_content,
+    search_code,
 )
-
 
 
 @pytest.fixture()

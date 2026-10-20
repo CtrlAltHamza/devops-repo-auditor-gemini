@@ -3,11 +3,8 @@
 import json
 from unittest.mock import MagicMock, patch
 
-import pytest
-from pydantic import ValidationError
-
 from agent_core.loop import run_audit
-from agent_core.schema import AuditReport, Violation
+from agent_core.schema import AuditReport
 
 
 def test_audit_loop_observe_reason_report(tmp_path):

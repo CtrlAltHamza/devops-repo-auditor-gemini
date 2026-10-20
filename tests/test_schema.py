@@ -1,6 +1,6 @@
-import json
 import pytest
 from pydantic import ValidationError
+
 from agent_core.schema import AuditReport, Violation
 
 

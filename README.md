@@ -3,7 +3,7 @@
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Architecture: Custom Python Agent](https://img.shields.io/badge/Architecture-Zero--Framework%20Python%20Loop-orange.svg)](#architecture)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests: Pytest Passing](https://img.shields.io/badge/tests-33%2F33%20passing-brightgreen.svg)](#testing)
+[![Tests: Pytest Passing](https://img.shields.io/badge/tests-35%2F35%20passing-brightgreen.svg)](#testing)
 
 
 An autonomous AI-powered DevOps & DevSecOps auditing agent that inspects GitHub repositories, identifies best-practice violations across 9 critical DevOps disciplines, gathers verifiable evidence using inspection tools, and generates structured, machine-readable audit reports.

@@ -53,6 +53,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Maximum agent reasoning iterations before termination",
     )
+    parser.add_argument(
+        "--model", "-m",
+        default=None,
+        help="Override Gemini model (e.g. gemini-2.5-flash, gemini-1.5-pro)",
+    )
     return parser.parse_args()
 
 
@@ -65,7 +70,7 @@ def main() -> int:
         return 1
 
     if args.max_iterations:
-        os.environ["MAX_AGENT_ITERATIONS"] = str(args.max_iterations)
+        os.environ["MAX_ITERATIONS"] = str(args.max_iterations)
 
     if not os.environ.get("GEMINI_API_KEY"):
         logger.error("GEMINI_API_KEY environment variable is not set. Please add it to your .env file.")
@@ -75,7 +80,13 @@ def main() -> int:
 
     try:
         with clone_repository(repo_url) as repo_path:
-            report = run_audit(repo_url, repo_path)
+            report = run_audit(
+                repo_url,
+                repo_path,
+                model=args.model,
+                max_iterations=args.max_iterations,
+            )
+
 
         # Write compliant JSON report
         report_dict = report.model_dump()

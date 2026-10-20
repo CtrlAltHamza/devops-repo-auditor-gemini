@@ -29,7 +29,11 @@ from tools import (
 logger = get_logger("loop")
 
 # Maximum number of reasoning iterations before we force‑stop
-MAX_ITERATIONS = int(os.environ.get("MAX_AGENT_ITERATIONS", "25"))
+DEFAULT_MAX_ITERATIONS = int(
+    os.environ.get("MAX_ITERATIONS", os.environ.get("MAX_AGENT_ITERATIONS", "15"))
+)
+MAX_ITERATIONS = DEFAULT_MAX_ITERATIONS
+
 
 # ─────────────────────────────────────────────────────────────
 # Tool registry — maps name → callable
@@ -148,17 +152,25 @@ TOOL_DECLARATIONS = types.Tool(
 # ─────────────────────────────────────────────────────────────
 # Main loop
 # ─────────────────────────────────────────────────────────────
-def run_audit(repo_url: str, repo_path: str) -> AuditReport:
+def run_audit(
+    repo_url: str,
+    repo_path: str,
+    model: str | None = None,
+    max_iterations: int | None = None,
+) -> AuditReport:
     """Run the full DevOps audit loop on a cloned repository.
 
     Args:
-        repo_url:  The original GitHub URL (for the report).
-        repo_path: The local path to the cloned repository.
+        repo_url:       The original GitHub URL (for the report).
+        repo_path:      The local path to the cloned repository.
+        model:          Optional Gemini model name override.
+        max_iterations: Optional max iterations override (defaults to MAX_ITERATIONS).
 
     Returns:
         A validated AuditReport Pydantic model instance.
     """
-    client = GeminiClient()
+    client = GeminiClient(model=model)
+    limit = max_iterations or DEFAULT_MAX_ITERATIONS
 
     # Conversation history
     contents: list[types.ContentUnionDict] = [
@@ -177,10 +189,11 @@ def run_audit(repo_url: str, repo_path: str) -> AuditReport:
         }
     ]
 
-    logger.info(f"Starting audit loop for {repo_url} (max_iterations={MAX_ITERATIONS})")
+    logger.info(f"Starting audit loop for {repo_url} (max_iterations={limit}, model={client._model})")
 
-    for iteration in range(1, MAX_ITERATIONS + 1):
-        logger.info(f"─── Iteration {iteration}/{MAX_ITERATIONS} ───")
+    for iteration in range(1, limit + 1):
+        logger.info(f"─── Iteration {iteration}/{limit} ───")
+
 
         response = client.generate(
             contents          = contents,
@@ -235,4 +248,5 @@ def run_audit(repo_url: str, repo_path: str) -> AuditReport:
             logger.info("Audit report parsed successfully")
             return AuditReport(**raw_json)
 
-    raise RuntimeError(f"Audit loop exceeded MAX_ITERATIONS={MAX_ITERATIONS} without producing a report.")
+    raise RuntimeError(f"Audit loop exceeded maximum iterations ({limit}) without producing a report.")
+

@@ -1,87 +1,77 @@
+"""Unit tests for the inspection tools module."""
 import os
+import tempfile
 import pytest
-import subprocess
-from pathlib import Path
-from tools import list_files, read_file, search_code, git_log, git_status, _resolve_safe_path
+
+from tools import (
+    list_repo_files,
+    read_file_content,
+    search_code,
+    list_commits,
+    check_file_exists,
+)
 
 
-@pytest.fixture
-def mock_repo(tmp_path):
-    """
-    Creates a temporary mock Git repository with realistic DevOps files.
-    """
-    repo = tmp_path / "mock_repo"
-    repo.mkdir()
-
-    # Create dummy files
-    (repo / "README.md").write_text("# Mock Project\nWelcome to mock project.\n")
-    (repo / ".gitignore").write_text("*.pyc\n__pycache__/\n")
-    
-    src = repo / "src"
-    src.mkdir()
-    (src / "app.py").write_text("import os\n\nAPI_KEY = 'secret123'\nprint('Hello world')\n")
-    (src / "data.bin").write_bytes(b"\x00\x01\x02\x03\x04\xff")
-
-    # Initialize git repo so git_log and git_status work
-    subprocess.run(["git", "init"], cwd=repo, capture_output=True, check=True)
-    subprocess.run(["git", "config", "user.name", "Tester"], cwd=repo, capture_output=True, check=True)
-    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, capture_output=True, check=True)
-    subprocess.run(["git", "add", "."], cwd=repo, capture_output=True, check=True)
-    subprocess.run(["git", "commit", "-m", "Initial commit with app and readme"], cwd=repo, capture_output=True, check=True)
-
-    return repo
+@pytest.fixture()
+def sample_repo(tmp_path):
+    """Create a minimal fake repository for testing."""
+    # Create some files
+    (tmp_path / "README.md").write_text("# Test Repo")
+    (tmp_path / "main.py").write_text("import os\npassword = \'hardcoded\'\nprint(\'hello\')")
+    (tmp_path / "requirements.txt").write_text("requests==2.31.0")
+    subdir = tmp_path / "src"
+    subdir.mkdir()
+    (subdir / "app.py").write_text("# app module")
+    return tmp_path
 
 
-def test_list_files(mock_repo):
-    res = list_files(str(mock_repo))
-    assert not res.get("error")
-    assert "README.md" in res["files"]
-    assert "src/app.py" in res["files"]
-    assert res["count"] >= 3
+class TestListRepoFiles:
+    def test_returns_files(self, sample_repo):
+        result = list_repo_files(str(sample_repo))
+        assert result["total"] >= 3
+        assert any("README.md" in f for f in result["files"])
+
+    def test_excludes_hidden(self, sample_repo):
+        (sample_repo / ".secret").write_text("hidden")
+        result = list_repo_files(str(sample_repo))
+        assert not any(".secret" in f for f in result["files"])
 
 
-def test_read_file(mock_repo):
-    res = read_file(str(mock_repo), "src/app.py", start_line=1, end_line=4)
-    assert not res.get("error")
-    assert res["file"] == "src/app.py"
-    assert "   1 | import os" in res["content"]
-    assert "API_KEY" in res["content"]
+class TestReadFileContent:
+    def test_reads_file(self, sample_repo):
+        result = read_file_content(str(sample_repo), "README.md")
+        assert result["error"] is None
+        assert "Test Repo" in result["content"]
+
+    def test_missing_file(self, sample_repo):
+        result = read_file_content(str(sample_repo), "nonexistent.txt")
+        assert result["error"] == "File not found"
+
+    def test_path_traversal_blocked(self, sample_repo):
+        result = read_file_content(str(sample_repo), "../secret.txt")
+        assert result["error"] is not None
 
 
-def test_read_file_binary(mock_repo):
-    res = read_file(str(mock_repo), "src/data.bin")
-    assert "error" in res
-    assert "binary" in res["error"]
+class TestSearchCode:
+    def test_finds_pattern(self, sample_repo):
+        result = search_code(str(sample_repo), "password", "*.py")
+        assert result["total"] >= 1
+        assert any("main.py" in m["file"] for m in result["matches"])
+
+    def test_no_match(self, sample_repo):
+        result = search_code(str(sample_repo), "XYZNOTFOUND", "*.py")
+        assert result["total"] == 0
+
+    def test_invalid_regex(self, sample_repo):
+        result = search_code(str(sample_repo), "[invalid")
+        assert "error" in result
 
 
-def test_read_file_nonexistent(mock_repo):
-    res = read_file(str(mock_repo), "does_not_exist.txt")
-    assert "error" in res
-    assert "does not exist" in res["error"]
+class TestCheckFileExists:
+    def test_existing_file(self, sample_repo):
+        result = check_file_exists(str(sample_repo), "requirements.txt")
+        assert result["exists"] is True
 
-
-def test_path_traversal_protection(mock_repo):
-    with pytest.raises(PermissionError):
-        _resolve_safe_path(str(mock_repo), "../../etc/passwd")
-
-
-def test_search_code(mock_repo):
-    res = search_code(str(mock_repo), r"API_KEY\s*=")
-    assert not res.get("error")
-    assert len(res["matches"]) >= 1
-    match = res["matches"][0]
-    assert match["file"] == "src/app.py"
-    assert match["line"] == 3
-
-
-def test_git_log(mock_repo):
-    res = git_log(str(mock_repo), max_commits=5)
-    assert not res.get("error")
-    assert res["count"] >= 1
-    assert "Initial commit" in res["commits"][0]["message"]
-
-
-def test_git_status(mock_repo):
-    res = git_status(str(mock_repo))
-    assert not res.get("error")
-    assert res["untracked_or_modified_count"] == 0
+    def test_missing_file(self, sample_repo):
+        result = check_file_exists(str(sample_repo), "Dockerfile")
+        assert result["exists"] is False

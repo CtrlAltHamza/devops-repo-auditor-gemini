@@ -3,7 +3,8 @@
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Architecture: Custom Python Agent](https://img.shields.io/badge/Architecture-Zero--Framework%20Python%20Loop-orange.svg)](#architecture)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests: Pytest Passing](https://img.shields.io/badge/tests-21%2F21%20passing-brightgreen.svg)](#testing)
+[![Tests: Pytest Passing](https://img.shields.io/badge/tests-33%2F33%20passing-brightgreen.svg)](#testing)
+
 
 An autonomous AI-powered DevOps & DevSecOps auditing agent that inspects GitHub repositories, identifies best-practice violations across 9 critical DevOps disciplines, gathers verifiable evidence using inspection tools, and generates structured, machine-readable audit reports.
 
@@ -79,7 +80,8 @@ The agent performs deep investigations across 9 core engineering areas:
 ```
 .
 ├── agent.py                 # CLI entry point (implements required execution interface)
-├── tools.py                 # Tool implementations (list_files, read_file, search_code, git_log, git_status)
+
+├── tools.py                 # Sandboxed inspection tools (list_files, read_file, search_code, git_log, git_status, inspect_github_actions)
 ├── agent_core/
 │   ├── __init__.py
 │   ├── loop.py              # Pure Python agent loop (Observe -> Reason -> Dispatch -> Report)
@@ -87,13 +89,16 @@ The agent performs deep investigations across 9 core engineering areas:
 │   ├── repo_manager.py      # Sandboxed Git cloning, URL injection defense, and cleanup
 │   ├── logger.py            # Enterprise structured logging + secret redaction filter
 │   ├── schema.py            # Pydantic schema for output contract compliance
-│   └── prompts.py           # Domain guidelines, rules catalogue, and few-shot constraints
+│   ├── prompts.py           # Domain guidelines, 9-category rubric, and JSON constraints
+│   └── utils.py             # Security utilities including safe_path_join traversal defense
 ├── tests/
-│   ├── test_agent_loop.py   # Unit tests for tool dispatch and report sanitization
+│   ├── test_agent_e2e.py    # End-to-end integration tests for loop and CLI flags
+│   ├── test_agent_loop.py   # Unit tests for tool registry and callable dispatch
 │   ├── test_logger.py       # Security tests for secret scrubbing filter
 │   ├── test_repo_manager.py # Tests for URL injection defenses and sandbox paths
 │   ├── test_schema.py       # Pydantic schema validation tests
-│   └── test_tools.py        # Comprehensive tests for inspection tools
+│   ├── test_tools.py        # Comprehensive tests for all inspection tools and aliases
+│   └── test_utils.py        # Unit tests for safe_path_join and path validation
 ├── sample_report.json       # Authentic example agent output
 ├── requirements.txt         # Minimal, pinned dependencies
 ├── .env.example             # Configuration template

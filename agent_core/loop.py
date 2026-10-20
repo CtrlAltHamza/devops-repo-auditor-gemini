@@ -20,6 +20,11 @@ from tools import (
     search_code,
     list_commits,
     check_file_exists,
+    git_status,
+    inspect_github_actions,
+    list_files,
+    read_file,
+    git_log,
 )
 
 logger = get_logger("loop")
@@ -31,12 +36,20 @@ MAX_ITERATIONS = int(os.environ.get("MAX_AGENT_ITERATIONS", "25"))
 # Tool registry — maps name → callable
 # ─────────────────────────────────────────────────────────────
 TOOL_REGISTRY: dict[str, Any] = {
-    "list_repo_files":   list_repo_files,
-    "read_file_content": read_file_content,
-    "search_code":       search_code,
-    "list_commits":      list_commits,
-    "check_file_exists": check_file_exists,
+    # Primary canonical implementations
+    "list_repo_files":        list_repo_files,
+    "read_file_content":      read_file_content,
+    "search_code":            search_code,
+    "list_commits":           list_commits,
+    "check_file_exists":      check_file_exists,
+    "git_status":             git_status,
+    "inspect_github_actions": inspect_github_actions,
+    # Direct specification aliases
+    "list_files":             list_files,
+    "read_file":              read_file,
+    "git_log":                git_log,
 }
+
 
 # ─────────────────────────────────────────────────────────────
 # Gemini function declarations
@@ -106,8 +119,31 @@ TOOL_DECLARATIONS = types.Tool(
                 required=["repo_path", "relative_path"],
             ),
         ),
+        types.FunctionDeclaration(
+            name="git_status",
+            description="Inspect git working tree status to check for untracked artifacts or uncommitted changes.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "repo_path": types.Schema(type=types.Type.STRING, description="Absolute path to the repository root"),
+                },
+                required=["repo_path"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="inspect_github_actions",
+            description="Inspect CI/CD workflows in .github/workflows for triggers, security permissions, and test/lint gates.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "repo_path": types.Schema(type=types.Type.STRING, description="Absolute path to the repository root"),
+                },
+                required=["repo_path"],
+            ),
+        ),
     ]
 )
+
 
 
 # ─────────────────────────────────────────────────────────────

@@ -50,6 +50,27 @@
       "description": "OS-generated metadata file tracked in git repository",
       "evidence": "Tracked binary file '.DS_Store' present in repository index",
       "recommendation": "Remove '.DS_Store' from git tracking using 'git rm --cached .DS_Store' and add it to the project '.gitignore'."
+    },
+    {
+      "rule_id": "TEST-001",
+      "category": "testing",
+      "severity": "high",
+      "file": null,
+      "line": null,
+      "description": "Repository lacks automated test suite or test discovery directory",
+      "evidence": "No tests/ directory, test_*.py, or *_test.py files detected in repository structure",
+      "recommendation": "Establish a tests/ suite with pytest and configure automated test execution in CI workflows."
+    },
+    {
+      "rule_id": "CFG-001",
+      "category": "configuration",
+      "severity": "medium",
+      "file": "scripts/deploy.sh",
+      "line": 4,
+      "description": "Hardcoded host-specific absolute filesystem path",
+      "evidence": "LOG_DIR='/home/developer/app/logs'",
+      "recommendation": "Parameterize paths via environment variables or make them relative to project root."
     }
   ]
 }
+

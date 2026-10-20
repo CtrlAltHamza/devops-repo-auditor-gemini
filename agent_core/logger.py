@@ -62,14 +62,32 @@ def get_logger(name: str = "devops_auditor", level: str | None = None) -> loggin
         log_level = getattr(logging, log_level_name, logging.INFO)
         logger.setLevel(log_level)
 
-        handler = logging.StreamHandler()
-        handler.setLevel(log_level)
         formatter = logging.Formatter(
             fmt="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S"
         )
-        handler.setFormatter(formatter)
-        handler.addFilter(SecretScrubbingFilter())
-        logger.addHandler(handler)
+
+        # Console handler
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(log_level)
+        console_handler.setFormatter(formatter)
+        console_handler.addFilter(SecretScrubbingFilter())
+        logger.addHandler(console_handler)
+
+        # Persistent local file handler (safely ignored by git in .gitignore)
+        try:
+            log_dir = "logs"
+            os.makedirs(log_dir, exist_ok=True)
+            file_handler = logging.FileHandler(
+                os.path.join(log_dir, "audit.log"),
+                encoding="utf-8",
+            )
+            file_handler.setLevel(log_level)
+            file_handler.setFormatter(formatter)
+            file_handler.addFilter(SecretScrubbingFilter())
+            logger.addHandler(file_handler)
+        except OSError:
+            pass  # noqa: S110 - Fall back cleanly to console logging if disk write is restricted
+
         logger.propagate = False
     return logger

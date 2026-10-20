@@ -1,76 +1,55 @@
 {
-  "repository": "https://github.com/example/vulnerable-devops-demo",
+  "repository": "https://github.com/octocat/Hello-World",
   "violations": [
     {
-      "rule_id": "SEC-001",
-      "category": "security",
-      "severity": "critical",
-      "file": "config/database.py",
-      "line": 14,
-      "description": "Hardcoded database credential in source code",
-      "evidence": "DB_PASSWORD = '***[REDACTED_SECRET]***'",
-      "recommendation": "Migrate database credentials to environment variables or a secret management vault (e.g., AWS Secrets Manager, HashiCorp Vault)."
-    },
-    {
-      "rule_id": "CI-002",
-      "category": "github_actions_ci",
-      "severity": "high",
-      "file": ".github/workflows/ci.yml",
-      "line": 8,
-      "description": "Dangerous trigger combination with pull_request_target",
-      "evidence": "on: [pull_request_target] followed by checkout of untrusted head branch",
-      "recommendation": "Use the standard 'pull_request' trigger for untrusted forks or restrict checkout to the base repository to prevent workflow PWN exploitation."
-    },
-    {
-      "rule_id": "CI-004",
-      "category": "github_actions_ci",
+      "rule_id": "HYG-001",
+      "category": "repository_hygiene",
       "severity": "medium",
-      "file": ".github/workflows/ci.yml",
+      "file": "README",
       "line": 1,
-      "description": "Missing explicit least-privilege permissions in GitHub Actions workflow",
-      "evidence": "No top-level 'permissions:' block defined, granting default read/write access to GITHUB_TOKEN",
-      "recommendation": "Define top-level 'permissions: read-all' or specify minimal required scopes (e.g. contents: read) to follow least-privilege principles."
+      "description": "Inadequate documentation in README file missing project details, setup, and usage instructions",
+      "evidence": "README file contains only 'Hello World!' and lacks markdown formatting extension (.md)",
+      "recommendation": "Rename to README.md and add detailed documentation including project overview, setup, and usage instructions"
     },
     {
-      "rule_id": "DEP-001",
-      "category": "dependency_management",
-      "severity": "medium",
-      "file": "requirements.txt",
-      "line": 3,
-      "description": "Unpinned production dependencies allowing wildcard breaking changes",
-      "evidence": "flask>=2.0.* and requests specified without upper bounds or exact lock",
-      "recommendation": "Pin dependency versions or adopt a lockfile system (e.g. poetry.lock, pip-tools) for deterministic, reproducible builds."
-    },
-    {
-      "rule_id": "HYG-003",
+      "rule_id": "HYG-002",
       "category": "repository_hygiene",
       "severity": "low",
-      "file": ".DS_Store",
+      "file": null,
       "line": null,
-      "description": "OS-generated metadata file tracked in git repository",
-      "evidence": "Tracked binary file '.DS_Store' present in repository index",
-      "recommendation": "Remove '.DS_Store' from git tracking using 'git rm --cached .DS_Store' and add it to the project '.gitignore'."
+      "description": "Missing .gitignore file to prevent unintended tracking of temporary files or build artifacts",
+      "evidence": "No .gitignore file exists in the repository root",
+      "recommendation": "Add a .gitignore file configured for the project environment and development tools"
     },
     {
       "rule_id": "TEST-001",
       "category": "testing",
-      "severity": "high",
+      "severity": "medium",
       "file": null,
       "line": null,
-      "description": "Repository lacks automated test suite or test discovery directory",
-      "evidence": "No tests/ directory, test_*.py, or *_test.py files detected in repository structure",
-      "recommendation": "Establish a tests/ suite with pytest and configure automated test execution in CI workflows."
+      "description": "Missing test suite or tests directory",
+      "evidence": "No unit tests, integration tests, or test configurations were found in the repository",
+      "recommendation": "Implement an automated test suite and test runner configuration"
     },
     {
-      "rule_id": "CFG-001",
-      "category": "configuration",
+      "rule_id": "CI-001",
+      "category": "github_actions_ci",
       "severity": "medium",
-      "file": "scripts/deploy.sh",
-      "line": 4,
-      "description": "Hardcoded host-specific absolute filesystem path",
-      "evidence": "LOG_DIR='/home/developer/app/logs'",
-      "recommendation": "Parameterize paths via environment variables or make them relative to project root."
+      "file": null,
+      "line": null,
+      "description": "Missing automated CI verification for pull requests and pushes",
+      "evidence": "No .github/workflows directory or CI workflow configurations exist in the repository",
+      "recommendation": "Create a GitHub Actions workflow in .github/workflows to automate testing and build checks on PRs and pushes"
+    },
+    {
+      "rule_id": "COL-002",
+      "category": "collaboration",
+      "severity": "low",
+      "file": null,
+      "line": null,
+      "description": "Missing contribution guidance and issue templates",
+      "evidence": "No CONTRIBUTING.md file or .github/ISSUE_TEMPLATE directory found in the repository",
+      "recommendation": "Add CONTRIBUTING.md and issue templates to guide community contributions and bug reporting"
     }
   ]
 }
-

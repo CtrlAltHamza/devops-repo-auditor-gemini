@@ -1,100 +1,81 @@
 #!/usr/bin/env python3
 """
-DevOps Repository Auditing Agent
-CLI Entry point adhering to assignment execution contract:
-python agent.py --repo <github_repository_url> --output report.json
+devops-audit-agent — CLI entry point.
+
+Usage:
+    python agent.py <github_repo_url> [--output report.json]
+
+Example:
+    python agent.py https://github.com/pallets/flask --output flask_audit.json
 """
 
-import sys
 import argparse
 import json
-from pathlib import Path
+import sys
+import os
+
 from dotenv import load_dotenv
 
-# Load local environment variables from .env if present
-load_dotenv()
+load_dotenv()  # Load .env file (GEMINI_API_KEY, etc.)
 
-from agent_core.logger import get_logger
-from agent_core.repo_manager import clone_repository, validate_repo_url
-from agent_core.loop import run_agent_loop
-from agent_core.schema import AuditReport
+from agent_core.logger       import get_logger
+from agent_core.repo_manager import clone_repository
+from agent_core.loop         import run_audit
 
-logger = get_logger("agent_cli")
+logger = get_logger("agent")
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Autonomous AI Agent for DevOps Repository Auditing"
+        prog="devops-audit-agent",
+        description="Autonomous DevOps Repository Auditing Agent powered by Google Gemini.",
     )
     parser.add_argument(
-        "--repo",
-        type=str,
-        required=True,
-        help="Public GitHub repository URL to inspect (e.g. https://github.com/owner/repo)"
+        "repo_url",
+        help="GitHub repository URL to audit (e.g. https://github.com/owner/repo)",
     )
     parser.add_argument(
-        "--output",
-        type=str,
-        default="report.json",
-        help="Path where the output JSON report will be saved (default: report.json)"
-    )
-    parser.add_argument(
-        "--max-iterations",
-        type=int,
-        default=15,
-        help="Maximum inspection turns for agent reasoning loop (default: 15)"
-    )
-    parser.add_argument(
-        "--model",
-        type=str,
-        default=None,
-        help="Gemini model to use (default: gemini-2.5-flash or from GEMINI_MODEL env)"
+        "--output", "-o",
+        default="audit_report.json",
+        help="Path to write the JSON audit report (default: audit_report.json)",
     )
     return parser.parse_args()
 
 
-def main():
+def main() -> int:
     args = parse_args()
-    logger.info("DevOps Auditing Agent initialized.")
-    logger.info(f"Target repository: {args.repo}")
-    logger.info(f"Target report destination: {args.output}")
+
+    if not os.environ.get("GEMINI_API_KEY"):
+        logger.error("GEMINI_API_KEY environment variable is not set. Please add it to your .env file.")
+        return 1
+
+    logger.info(f"Starting DevOps audit for: {args.repo_url}")
 
     try:
-        # Validate repository URL
-        validated_url = validate_repo_url(args.repo)
+        with clone_repository(args.repo_url) as repo_path:
+            report = run_audit(args.repo_url, repo_path)
 
-        # Execute inspection in sandboxed temporary workspace
-        with clone_repository(validated_url) as sandbox_path:
-            report = run_agent_loop(
-                repo_url=validated_url,
-                repo_path=sandbox_path,
-                max_iterations=args.max_iterations,
-                model_name=args.model
-            )
+        # Write JSON report
+        report_dict = report.model_dump()
+        with open(args.output, "w", encoding="utf-8") as fh:
+            json.dump(report_dict, fh, indent=2, default=str)
 
-        # Write output report adhering strictly to schema contract
-        out_path = Path(args.output).resolve()
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(out_path, "w", encoding="utf-8") as f:
-            f.write(report.model_dump_json(indent=2))
+        logger.info(f"Audit complete! Report saved to: {args.output}")
+        logger.info(f"Overall score: {report.overall_score}/100")
+        logger.info(f"Total violations: {len(report.violations)}")
 
-        logger.info(f"Report successfully saved to {out_path}")
-        print(f"Audit completed successfully. Report written to {out_path}")
-        sys.exit(0)
+        return 0
 
-    except ValueError as ve:
-        logger.error(f"Configuration or validation error: {ve}")
-        sys.stderr.write(f"Error: {ve}\n")
-        sys.exit(1)
-    except RuntimeError as re:
-        logger.error(f"Runtime error during inspection: {re}")
-        sys.stderr.write(f"Runtime Error: {re}\n")
-        sys.exit(1)
-    except Exception as e:
-        logger.exception(f"Unexpected fatal error: {e}")
-        sys.stderr.write(f"Fatal Error: {e}\n")
-        sys.exit(1)
+    except ValueError as exc:
+        logger.error(f"Invalid input: {exc}")
+        return 1
+    except RuntimeError as exc:
+        logger.error(f"Audit failed: {exc}")
+        return 2
+    except Exception as exc:
+        logger.exception(f"Unexpected error: {exc}")
+        return 3
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

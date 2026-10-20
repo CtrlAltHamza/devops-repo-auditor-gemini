@@ -193,7 +193,9 @@ def run_audit(
 
     for iteration in range(1, limit + 1):
         logger.info(f"─── Iteration {iteration}/{limit} ───")
-
+        if iteration > 1:
+            import time
+            time.sleep(2)  # Polite pacing to respect free-tier quota limits
 
         response = client.generate(
             contents          = contents,

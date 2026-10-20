@@ -29,7 +29,7 @@ class GeminiClient:
         max_output_tokens: int = 8192,
     ) -> None:
         self._api_key = api_key or os.environ["GEMINI_API_KEY"]
-        self._model   = model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+        self._model   = model or os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
         self._temperature        = temperature
         self._max_output_tokens  = max_output_tokens
         self._client             = genai.Client(api_key=self._api_key)
@@ -43,8 +43,11 @@ class GeminiClient:
         contents: list[types.ContentUnionDict],
         tools: list[types.Tool] | None = None,
         system_instruction: str | None = None,
+        max_retries: int = 5,
     ) -> types.GenerateContentResponse:
-        """Send *contents* to the Gemini model and return the raw response."""
+        """Send *contents* to the Gemini model and return the raw response with automatic 429 retry."""
+        import time
+
         config_kwargs: dict[str, Any] = {
             "temperature":       self._temperature,
             "max_output_tokens": self._max_output_tokens,
@@ -57,13 +60,26 @@ class GeminiClient:
         config = types.GenerateContentConfig(**config_kwargs)
 
         logger.debug(f"Sending request to {self._model} with {len(contents)} content parts")
-        response = self._client.models.generate_content(
-            model    = self._model,
-            contents = contents,
-            config   = config,
-        )
-        logger.debug("Response received from Gemini API")
-        return response
+        for attempt in range(max_retries):
+            try:
+                response = self._client.models.generate_content(
+                    model    = self._model,
+                    contents = contents,
+                    config   = config,
+                )
+                logger.debug("Response received from Gemini API")
+                return response
+            except Exception as exc:
+                err_str = str(exc)
+                if ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "503" in err_str) and attempt < max_retries - 1:
+                    wait_time = 5 * (attempt + 1)
+                    logger.warning(
+                        f"API rate limit or temporary server error encountered. Waiting {wait_time}s before retry (attempt {attempt + 1}/{max_retries})..."
+                    )
+                    time.sleep(wait_time)
+                else:
+                    raise
+
 
     # ─────────────────────────────────────────────────────────
     # Convenience: extract text

@@ -1,0 +1,22 @@
+# Ruff linter configuration — explicit so CI results are reproducible
+target-version = "py312"
+line-length = 120
+exclude = [".venv", "__pycache__", ".ruff_cache", ".pytest_cache"]
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "PIE", "S", "BLE", "TRY", "PLW"]
+ignore = [
+    "E501",    # long lines (prompt strings / tool declarations)
+    "S101",    # assert is expected in pytest tests
+    "S603",    # subprocess with fixed arg lists (git) is intentional
+    "S607",    # 'git' resolved from PATH by design
+    "TRY003",  # descriptive messages in raised exceptions are fine
+    "TRY300",  # return-in-try style is acceptable here
+    "TRY400",  # logger.error (no traceback) is intentional for expected failures
+]
+
+[lint.per-file-ignores]
+# Tools must never crash the agent loop: broad catches return structured errors to the LLM
+"tools.py" = ["BLE001"]
+"agent_core/*.py" = ["BLE001"]
+"agent.py" = ["BLE001", "E402"]  # load_dotenv() must run before agent_core imports

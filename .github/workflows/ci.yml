@@ -25,5 +25,5 @@ jobs:
 
       - name: Run linter
         run: |
-          pip install ruff
+          pip install "ruff==0.17.1"
           ruff check .

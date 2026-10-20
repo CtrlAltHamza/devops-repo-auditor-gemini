@@ -89,8 +89,9 @@ class GeminiClient:
             for part in response.candidates[0].content.parts:
                 if part.function_call:
                     calls.append(part.function_call)
-        except Exception:
-            pass
+        except (AttributeError, IndexError, TypeError):
+            # Response had no candidates/parts (e.g. blocked or empty) — treat as no tool calls
+            return []
         return calls
 
     # ─────────────────────────────────────────────────────────

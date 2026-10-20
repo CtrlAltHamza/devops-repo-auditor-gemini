@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 from typing import Any
+
 from agent_core.logger import get_logger
 from agent_core.utils import safe_path_join
 
@@ -68,7 +69,7 @@ def read_file_content(
         return {"path": relative_path, "content": "", "error": "File not found"}
 
     try:
-        with open(full_path, "r", encoding="utf-8", errors="replace") as fh:
+        with open(full_path, encoding="utf-8", errors="replace") as fh:
             raw = fh.read(max_bytes + 1)
         truncated = len(raw) > max_bytes
         return {
@@ -113,7 +114,7 @@ def search_code(
             full_path = os.path.join(dirpath, fname)
             rel_path  = os.path.relpath(full_path, repo_path)
             try:
-                with open(full_path, "r", encoding="utf-8", errors="replace") as fh:
+                with open(full_path, encoding="utf-8", errors="replace") as fh:
                     for lineno, line in enumerate(fh, 1):
                         if regex.search(line):
                             matches.append({
@@ -123,8 +124,8 @@ def search_code(
                             })
                             if len(matches) >= max_results:
                                 return {"matches": matches, "total": len(matches), "truncated": True}
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug(f"search_code: skipping unreadable file {rel_path}: {exc}")
 
     return {"matches": matches, "total": len(matches), "truncated": False}
 
@@ -148,7 +149,7 @@ def list_commits(repo_path: str, max_count: int = 30) -> dict[str, Any]:
             "--date=short",
         ]
         result = subprocess.run(
-            cmd, cwd=repo_path, capture_output=True, text=True, timeout=30
+            cmd, cwd=repo_path, capture_output=True, text=True, timeout=30, check=False
         )
         if result.returncode != 0:
             return {"commits": [], "total": 0, "error": result.stderr.strip()}
@@ -203,7 +204,7 @@ def git_status(repo_path: str) -> dict[str, Any]:
     try:
         cmd = ["git", "status", "--porcelain"]
         result = subprocess.run(
-            cmd, cwd=repo_path, capture_output=True, text=True, timeout=15
+            cmd, cwd=repo_path, capture_output=True, text=True, timeout=15, check=False
         )
         if result.returncode != 0:
             return {"clean": False, "changes": [], "error": result.stderr.strip()}
@@ -236,13 +237,13 @@ def inspect_github_actions(repo_path: str) -> dict[str, Any]:
 
     workflows = []
     for fname in sorted(os.listdir(workflows_dir)):
-        if not (fname.endswith(".yml") or fname.endswith(".yaml")):
+        if not fname.endswith((".yml", ".yaml")):
             continue
         rel_path = os.path.join(".github", "workflows", fname).replace("\\", "/")
         full_path = os.path.join(workflows_dir, fname)
 
         try:
-            with open(full_path, "r", encoding="utf-8", errors="replace") as fh:
+            with open(full_path, encoding="utf-8", errors="replace") as fh:
                 content = fh.read()
 
             triggers = []

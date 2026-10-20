@@ -1,11 +1,12 @@
 import os
 import re
-import stat
 import shutil
-import tempfile
+import stat
 import subprocess
+import tempfile
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
+
 from agent_core.logger import get_logger
 
 logger = get_logger("repo_manager")
@@ -55,8 +56,8 @@ def clone_repository(repo_url: str, depth: int = 50) -> Generator[str, None, Non
     try:
         logger.info(f"Cloning {validated_url} (depth={depth})...")
         cmd = ["git", "clone", "--depth", str(depth), "--quiet", validated_url, temp_dir]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-        
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+
         if result.returncode != 0:
             error_msg = result.stderr.strip() or "Unknown git error"
             raise RuntimeError(f"Failed to clone repository: {error_msg}")

@@ -17,9 +17,9 @@ from dotenv import load_dotenv
 
 load_dotenv()  # Load .env file (GEMINI_API_KEY, etc.)
 
-from agent_core.logger       import get_logger
+from agent_core.logger import get_logger
+from agent_core.loop import run_audit
 from agent_core.repo_manager import clone_repository
-from agent_core.loop         import run_audit
 
 logger = get_logger("agent")
 
@@ -93,8 +93,8 @@ def main() -> int:
     except RuntimeError as exc:
         logger.error(f"Audit failed: {exc}")
         return 2
-    except Exception as exc:
-        logger.exception(f"Unexpected error: {exc}")
+    except Exception:
+        logger.exception("Unexpected error during audit")
         return 3
 
 

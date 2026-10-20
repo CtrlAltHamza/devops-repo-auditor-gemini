@@ -197,16 +197,49 @@ def run_audit(
             import time
             time.sleep(2)  # Polite pacing to respect free-tier quota limits
 
+        if iteration == limit:
+            logger.info("Final iteration reached: instructing model to synthesize report without further tools.")
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(
+                            text=(
+                                "Investigation concluded. Do NOT call any tools. "
+                                f"Synthesize all facts gathered into the final JSON audit report for {repo_url} now. "
+                                'Adhere strictly to the JSON schema: {"repository": "' + repo_url + '", "violations": [...]}. '
+                                "Output ONLY the JSON object, enclosed in a ```json code fence."
+                            )
+                        )
+                    ],
+                )
+            )
+            tools_for_step = None
+        elif iteration == limit - 1:
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(
+                            text="Notice: Only 1 tool iteration remains. Conclude any pending checks."
+                        )
+                    ],
+                )
+            )
+            tools_for_step = [TOOL_DECLARATIONS]
+        else:
+            tools_for_step = [TOOL_DECLARATIONS]
+
         response = client.generate(
             contents          = contents,
-            tools             = [TOOL_DECLARATIONS],
+            tools             = tools_for_step,
             system_instruction = SYSTEM_PROMPT,
         )
 
         # Check for tool calls
         tool_calls = client.extract_tool_calls(response)
 
-        if tool_calls:
+        if tool_calls and iteration < limit:
             # Append the model's response directly to history (preserves function_calls and SDK structures)
             contents.append(response.candidates[0].content)
 
@@ -239,8 +272,8 @@ def run_audit(
             contents.append(types.Content(role="user", parts=tool_results))
 
         else:
-            # No tool calls → model has finished; parse the JSON report
-            logger.info("No tool calls detected — parsing final report")
+            # No tool calls (or final iteration) → model has finished; parse the JSON report
+            logger.info("Parsing audit report from model response")
             raw_json = client.parse_json_response(response)
             if raw_json is None:
                 text = client.extract_text(response) or ""
@@ -263,10 +296,36 @@ def run_audit(
                         )
                     )
                     continue
-                raise ValueError("Model did not return valid JSON for the audit report.")
+                break
 
             logger.info("Audit report parsed successfully")
             return AuditReport(**raw_json)
+
+    # If loop ended without parsed report, execute forced final synthesis
+    logger.info("Loop ended without report — forcing final report extraction.")
+    contents.append(
+        types.Content(
+            role="user",
+            parts=[
+                types.Part.from_text(
+                    text=(
+                        f"Produce the final JSON audit report for {repo_url} now based on the findings above. "
+                        'Schema: {"repository": "' + repo_url + '", "violations": [...]}. '
+                        "Output ONLY the JSON object, enclosed in a ```json code fence."
+                    )
+                )
+            ],
+        )
+    )
+    final_resp = client.generate(
+        contents=contents,
+        tools=None,
+        system_instruction=SYSTEM_PROMPT,
+    )
+    raw_json = client.parse_json_response(final_resp)
+    if raw_json is not None:
+        logger.info("Final forced audit report parsed successfully")
+        return AuditReport(**raw_json)
 
     raise RuntimeError(f"Audit loop exceeded maximum iterations ({limit}) without producing a report.")
 

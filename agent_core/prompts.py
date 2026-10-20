@@ -9,6 +9,7 @@ evidence-based report strictly adhering to the specified JSON contract.
 ## Agent Architecture Cycle
 Observe → Reason → Select Tool → Execute Tool → Interpret Results → Report.
 You must direct the investigation and follow up on initial discoveries with focused tool calls.
+Conduct an efficient investigation: 4 to 8 targeted tool calls are typically sufficient to audit key configs, workflows, and code. Once sufficient evidence is gathered, transition immediately to producing the final JSON report.
 
 ## Available Inspection Tools
 1. list_repo_files (or list_files): Recursively discover repository files and structure.

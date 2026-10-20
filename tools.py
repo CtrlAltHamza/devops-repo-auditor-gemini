@@ -216,9 +216,70 @@ def git_status(repo_path: str) -> dict[str, Any]:
 
 
 # ──────────────────────────────────────────────────────────────────
+# 7. inspect_github_actions
+# ──────────────────────────────────────────────────────────────────
+def inspect_github_actions(repo_path: str) -> dict[str, Any]:
+    """Inspect all GitHub Actions workflow files in .github/workflows.
+
+    Analyzes triggers, permissions, jobs, and security posture (e.g.
+    unsafe pull_request_target triggers, write-all permissions, unpinned
+    actions, or missing testing/linting steps).
+    """
+    logger.info(f"[tool] inspect_github_actions: scanning {repo_path}")
+    workflows_dir = os.path.join(repo_path, ".github", "workflows")
+    if not os.path.isdir(workflows_dir):
+        return {
+            "has_workflows": False,
+            "workflows": [],
+            "message": "No .github/workflows directory found in repository",
+        }
+
+    workflows = []
+    for fname in sorted(os.listdir(workflows_dir)):
+        if not (fname.endswith(".yml") or fname.endswith(".yaml")):
+            continue
+        rel_path = os.path.join(".github", "workflows", fname).replace("\\", "/")
+        full_path = os.path.join(workflows_dir, fname)
+
+        try:
+            with open(full_path, "r", encoding="utf-8", errors="replace") as fh:
+                content = fh.read()
+
+            triggers = []
+            for trigger in ["push", "pull_request", "pull_request_target", "schedule", "workflow_dispatch", "release"]:
+                if re.search(rf"\b{trigger}\s*:", content):
+                    triggers.append(trigger)
+
+            # Security and Quality checks
+            has_write_all = bool(re.search(r"permissions:\s*write-all", content, re.IGNORECASE))
+            has_pull_request_target = "pull_request_target" in triggers
+            has_test_step = bool(re.search(r"\b(pytest|test|unittest|tox|nox)\b", content, re.IGNORECASE))
+            has_lint_step = bool(re.search(r"\b(ruff|flake8|black|pylint|mypy|eslint)\b", content, re.IGNORECASE))
+
+            workflows.append({
+                "file": rel_path,
+                "triggers": triggers,
+                "has_write_all_permissions": has_write_all,
+                "has_pull_request_target": has_pull_request_target,
+                "has_test_step": has_test_step,
+                "has_lint_step": has_lint_step,
+                "line_count": len(content.splitlines()),
+            })
+        except Exception as exc:
+            workflows.append({"file": rel_path, "error": str(exc)})
+
+    return {
+        "has_workflows": len(workflows) > 0,
+        "workflows": workflows,
+        "total_workflows": len(workflows),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────
 # Direct Specification Aliases
 # ──────────────────────────────────────────────────────────────────
 list_files = list_repo_files
 read_file = read_file_content
 git_log = list_commits
+
 

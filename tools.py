@@ -30,6 +30,8 @@ def list_repo_files(repo_path: str, max_files: int = 500) -> dict[str, Any]:
         # Skip hidden directories and .git
         dirnames[:] = [d for d in dirnames if not d.startswith(".")]
         for fname in filenames:
+            if fname.startswith("."):
+                continue  # skip hidden files
             full = os.path.join(dirpath, fname)
             rel  = os.path.relpath(full, repo_path)
             result.append(rel)

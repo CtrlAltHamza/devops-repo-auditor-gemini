@@ -192,14 +192,14 @@ def run_audit(repo_url: str, repo_path: str) -> AuditReport:
         tool_calls = client.extract_tool_calls(response)
 
         if tool_calls:
-            # Append the model's response to history
-            contents.append({"role": "model", "parts": [p.__dict__ for p in response.candidates[0].content.parts]})
+            # Append the model's response directly to history (preserves function_calls and SDK structures)
+            contents.append(response.candidates[0].content)
 
             # Execute each requested tool
             tool_results = []
             for call in tool_calls:
                 fn_name = call.name
-                fn_args = dict(call.args)
+                fn_args = dict(call.args) if call.args else {}
                 logger.info(f"[call] {fn_name}({fn_args})")
 
                 if fn_name not in TOOL_REGISTRY:
@@ -212,17 +212,16 @@ def run_audit(repo_url: str, repo_path: str) -> AuditReport:
                         logger.error(f"Tool error in {fn_name}: {exc}")
 
                 logger.debug(f"[result] {fn_name} => {str(result)[:200]}")
+                response_dict = result if isinstance(result, dict) else {"result": result}
                 tool_results.append(
-                    types.Part(
-                        function_response=types.FunctionResponse(
-                            name=fn_name,
-                            response=result,
-                        )
+                    types.Part.from_function_response(
+                        name=fn_name,
+                        response=response_dict,
                     )
                 )
 
-            # Add tool results to conversation
-            contents.append({"role": "user", "parts": tool_results})
+            # Add tool results to conversation history
+            contents.append(types.Content(role="user", parts=tool_results))
 
         else:
             # No tool calls → model has finished; parse the JSON report

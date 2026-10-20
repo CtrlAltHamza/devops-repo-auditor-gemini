@@ -49,3 +49,6 @@ logs/
 temp_repos/
 scratch/
 report.json
+*_report.json
+!sample_report.json
+

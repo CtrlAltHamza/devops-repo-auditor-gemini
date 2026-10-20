@@ -1,231 +1,204 @@
-import os
+"""
+Agentic Loop — Observe → Reason → Act → Repeat until done.
+The loop drives the DevOps audit by letting the Gemini model
+decide which tool to call next and when the audit is complete.
+"""
+
 import json
-from typing import Dict, Any, List, Optional
+import os
+from typing import Any
+
 from google.genai import types
 
-from agent_core.logger import get_logger, SecretScrubbingFilter
-from agent_core.schema import AuditReport, Violation
-from agent_core.prompts import SYSTEM_PROMPT, VIOLATION_SYNTHESIS_PROMPT
-from agent_core.llm_client import get_gemini_client, get_inspection_tools_declaration
-from tools import list_files, read_file, search_code, git_log, git_status
+from agent_core.llm_client import GeminiClient
+from agent_core.logger     import get_logger
+from agent_core.prompts    import SYSTEM_PROMPT
+from agent_core.schema     import AuditReport
+from tools import (
+    list_repo_files,
+    read_file_content,
+    search_code,
+    list_commits,
+    check_file_exists,
+)
 
-logger = get_logger("agent_loop")
+logger = get_logger("loop")
+
+# Maximum number of reasoning iterations before we force‑stop
+MAX_ITERATIONS = int(os.environ.get("MAX_AGENT_ITERATIONS", "25"))
+
+# ─────────────────────────────────────────────────────────────
+# Tool registry — maps name → callable
+# ─────────────────────────────────────────────────────────────
+TOOL_REGISTRY: dict[str, Any] = {
+    "list_repo_files":   list_repo_files,
+    "read_file_content": read_file_content,
+    "search_code":       search_code,
+    "list_commits":      list_commits,
+    "check_file_exists": check_file_exists,
+}
+
+# ─────────────────────────────────────────────────────────────
+# Gemini function declarations
+# ─────────────────────────────────────────────────────────────
+TOOL_DECLARATIONS = types.Tool(
+    function_declarations=[
+        types.FunctionDeclaration(
+            name="list_repo_files",
+            description="List all files in the cloned repository (excludes .git/).",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "repo_path": types.Schema(type=types.Type.STRING, description="Absolute path to the repository root"),
+                    "max_files": types.Schema(type=types.Type.INTEGER, description="Maximum number of files to return (default 500)"),
+                },
+                required=["repo_path"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="read_file_content",
+            description="Read the content of a specific file from the repository.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "repo_path":     types.Schema(type=types.Type.STRING, description="Absolute path to the repository root"),
+                    "relative_path": types.Schema(type=types.Type.STRING, description="File path relative to the repo root"),
+                    "max_bytes":     types.Schema(type=types.Type.INTEGER, description="Maximum bytes to read (default 32768)"),
+                },
+                required=["repo_path", "relative_path"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="search_code",
+            description="Search for a regex pattern across source files in the repository.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "repo_path":   types.Schema(type=types.Type.STRING, description="Absolute path to the repository root"),
+                    "pattern":     types.Schema(type=types.Type.STRING, description="Regex pattern to search for"),
+                    "file_glob":   types.Schema(type=types.Type.STRING, description="File extension glob (e.g. *.py, *.yml)"),
+                    "max_results": types.Schema(type=types.Type.INTEGER, description="Max matches to return"),
+                },
+                required=["repo_path", "pattern"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="list_commits",
+            description="List recent Git commits from the repository.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "repo_path":  types.Schema(type=types.Type.STRING, description="Absolute path to the repository root"),
+                    "max_count":  types.Schema(type=types.Type.INTEGER, description="Max number of commits to return"),
+                },
+                required=["repo_path"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="check_file_exists",
+            description="Check whether a specific file (e.g. .gitignore, Dockerfile) exists in the repository.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "repo_path":     types.Schema(type=types.Type.STRING, description="Absolute path to the repository root"),
+                    "relative_path": types.Schema(type=types.Type.STRING, description="File path relative to the repo root"),
+                },
+                required=["repo_path", "relative_path"],
+            ),
+        ),
+    ]
+)
 
 
-def dispatch_tool(tool_name: str, args: Dict[str, Any], repo_path: str) -> Dict[str, Any]:
-    """
-    Executes the tool requested by the LLM within the isolated repository sandbox.
-    Fulfills manual dispatch requirement: No external agent frameworks.
-    """
-    logger.info(f"Dispatching tool '{tool_name}' with arguments: {args}")
-
-    if tool_name == "list_files":
-        return list_files(
-            repo_path=repo_path,
-            sub_dir=args.get("sub_dir", ""),
-            max_depth=int(args.get("max_depth", 4))
-        )
-    elif tool_name == "read_file":
-        return read_file(
-            repo_path=repo_path,
-            file_path=args.get("file_path", ""),
-            start_line=int(args.get("start_line", 1)),
-            end_line=int(args.get("end_line", 150))
-        )
-    elif tool_name == "search_code":
-        return search_code(
-            repo_path=repo_path,
-            pattern=args.get("pattern", ""),
-            file_pattern=args.get("file_pattern", "")
-        )
-    elif tool_name == "git_log":
-        return git_log(
-            repo_path=repo_path,
-            max_commits=int(args.get("max_commits", 15))
-        )
-    elif tool_name == "git_status":
-        return git_status(repo_path=repo_path)
-    else:
-        logger.warning(f"Unknown tool invoked by model: '{tool_name}'")
-        return {"error": f"Unknown tool: '{tool_name}'"}
-
-
-def sanitize_report(report: AuditReport, repo_url: str) -> AuditReport:
-    """
-    MLOps Quality Gate:
-    1. Enforces correct repository URL.
-    2. Deduplicates violations.
-    3. Scrubs any accidental credential remnants from evidence/descriptions.
-    4. Normalizes null fields.
-    """
-    report.repository = repo_url
-    seen = set()
-    cleaned_violations: List[Violation] = []
-
-    for v in report.violations:
-        # Scrub evidence & description for absolute safety
-        clean_evidence = SecretScrubbingFilter.scrub(v.evidence)
-        clean_desc = SecretScrubbingFilter.scrub(v.description)
-
-        # Normalize file and line
-        clean_file = v.file.strip() if v.file and v.file.strip() not in ("", "null", "None") else None
-        clean_line = v.line if (isinstance(v.line, int) and v.line > 0) else None
-
-        # Deduplication key
-        dedup_key = (v.rule_id, clean_file, clean_line)
-        if dedup_key in seen:
-            continue
-        seen.add(dedup_key)
-
-        cleaned_violations.append(
-            Violation(
-                rule_id=v.rule_id,
-                category=v.category,
-                severity=v.severity,
-                file=clean_file,
-                line=clean_line,
-                description=clean_desc,
-                evidence=clean_evidence,
-                recommendation=v.recommendation
-            )
-        )
-
-    report.violations = cleaned_violations
-    return report
-
-
-def run_agent_loop(
-    repo_url: str,
-    repo_path: str,
-    max_iterations: int = 15,
-    model_name: Optional[str] = None
-) -> AuditReport:
-    """
-    Executes the autonomous DevOps auditing cycle:
-    Observe -> Reason -> Select Tool -> Execute Tool -> Interpret Results -> Report.
+# ─────────────────────────────────────────────────────────────
+# Main loop
+# ─────────────────────────────────────────────────────────────
+def run_audit(repo_url: str, repo_path: str) -> AuditReport:
+    """Run the full DevOps audit loop on a cloned repository.
 
     Args:
-        repo_url: Public GitHub repository URL.
-        repo_path: Path to the cloned repository in the local sandbox.
-        max_iterations: Maximum loop turns before forcing report synthesis.
-        model_name: Gemini model name (default from GEMINI_MODEL env var or 'gemini-2.5-flash').
+        repo_url:  The original GitHub URL (for the report).
+        repo_path: The local path to the cloned repository.
 
     Returns:
-        Validated AuditReport adhering strictly to the assignment schema.
+        A validated AuditReport Pydantic model instance.
     """
-    client = get_gemini_client()
-    model = model_name or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    tools_declaration = get_inspection_tools_declaration()
+    client = GeminiClient()
 
-    logger.info(f"Starting DevOps Audit Agent loop on {repo_url} using model {model}")
-
-    # Phase 1 of Cycle: Observe (Initial repository discovery)
-    initial_discovery = list_files(repo_path, max_depth=3)
-    files_summary = initial_discovery.get("files", [])[:80]
-    total_found = initial_discovery.get("count", len(files_summary))
-
-    initial_prompt = (
-        f"Repository cloned to local sandbox: {repo_url}\n"
-        f"Discovered {total_found} files. Top entries:\n"
-        f"{json.dumps(files_summary, indent=2)}\n\n"
-        "Begin your autonomous investigation loop. Inspect repository hygiene, dependencies, "
-        "CI/CD workflows (.github/workflows), test suites, configuration, and security. "
-        "Use your inspection tools (read_file, search_code, git_log, git_status, list_files) "
-        "to gather verified evidence."
-    )
-
-    contents: List[types.Content] = [
-        types.Content(role="user", parts=[types.Part.from_text(text=initial_prompt)])
+    # Conversation history
+    contents: list[types.ContentUnionDict] = [
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "text": (
+                        f"Please audit the DevOps repository at URL: {repo_url}\n"
+                        f"The repository has been cloned locally to: {repo_path}\n"
+                        "Use the provided tools to inspect the repository systematically, "
+                        "then produce the final JSON audit report."
+                    )
+                }
+            ],
+        }
     ]
 
-    config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_PROMPT,
-        temperature=0.1,
-        tools=[tools_declaration],
-    )
+    logger.info(f"Starting audit loop for {repo_url} (max_iterations={MAX_ITERATIONS})")
 
-    iteration = 0
-    investigation_finished = False
+    for iteration in range(1, MAX_ITERATIONS + 1):
+        logger.info(f"─── Iteration {iteration}/{MAX_ITERATIONS} ───")
 
-    while iteration < max_iterations and not investigation_finished:
-        iteration += 1
-        logger.info(f"--- Agent Cycle Turn {iteration}/{max_iterations} ---")
-
-        response = client.models.generate_content(
-            model=model,
-            contents=contents,
-            config=config
+        response = client.generate(
+            contents          = contents,
+            tools             = [TOOL_DECLARATIONS],
+            system_instruction = SYSTEM_PROMPT,
         )
 
-        candidate = response.candidates[0] if response.candidates else None
-        if not candidate or not candidate.content:
-            logger.warning("Empty response from LLM, prompting continuation...")
-            contents.append(types.Content(role="user", parts=[types.Part.from_text(text="Please continue the audit.")]))
-            continue
+        # Check for tool calls
+        tool_calls = client.extract_tool_calls(response)
 
-        model_content = candidate.content
-        contents.append(model_content)
+        if tool_calls:
+            # Append the model's response to history
+            contents.append({"role": "model", "parts": [p.__dict__ for p in response.candidates[0].content.parts]})
 
-        function_calls = response.function_calls
-        if function_calls:
-            # Model selected tools: Execute tool dispatch in Python
-            response_parts = []
-            for call in function_calls:
-                logger.info(f"[Turn {iteration}] LLM requested tool: {call.name}")
-                tool_output = dispatch_tool(call.name, call.args, repo_path)
-                response_parts.append(
-                    types.Part.from_function_response(
-                        name=call.name,
-                        response=tool_output
+            # Execute each requested tool
+            tool_results = []
+            for call in tool_calls:
+                fn_name = call.name
+                fn_args = dict(call.args)
+                logger.info(f"[call] {fn_name}({fn_args})")
+
+                if fn_name not in TOOL_REGISTRY:
+                    result = {"error": f"Unknown tool: {fn_name}"}
+                else:
+                    try:
+                        result = TOOL_REGISTRY[fn_name](**fn_args)
+                    except Exception as exc:
+                        result = {"error": str(exc)}
+                        logger.error(f"Tool error in {fn_name}: {exc}")
+
+                logger.debug(f"[result] {fn_name} => {str(result)[:200]}")
+                tool_results.append(
+                    types.Part(
+                        function_response=types.FunctionResponse(
+                            name=fn_name,
+                            response=result,
+                        )
                     )
                 )
 
-            # Supply tool outputs back to LLM for interpretation
-            contents.append(types.Content(role="user", parts=response_parts))
+            # Add tool results to conversation
+            contents.append({"role": "user", "parts": tool_results})
+
         else:
-            # Model provided textual reasoning without tool calls
-            text_response = response.text or ""
-            logger.info(f"[Turn {iteration}] Agent reasoning output: {text_response[:150]}...")
+            # No tool calls → model has finished; parse the JSON report
+            logger.info("No tool calls detected — parsing final report")
+            raw_json = client.parse_json_response(response)
+            if raw_json is None:
+                text = client.extract_text(response) or ""
+                logger.error(f"Could not parse JSON from model response: {text[:500]!r}")
+                raise ValueError("Model did not return valid JSON for the audit report.")
 
-            if "INVESTIGATION_COMPLETE" in text_response or iteration >= max_iterations:
-                logger.info("Agent signaled completion of investigation.")
-                investigation_finished = True
-            else:
-                # Prompt the agent to continue or wrap up
-                follow_up = (
-                    "If you need to inspect more files or search code, call the appropriate tool. "
-                    "If you have gathered sufficient evidence to conclude your audit, respond with 'INVESTIGATION_COMPLETE'."
-                )
-                contents.append(types.Content(role="user", parts=[types.Part.from_text(text=follow_up)]))
+            logger.info("Audit report parsed successfully")
+            return AuditReport(**raw_json)
 
-    # Phase 5 of Cycle: Final Synthesis & JSON Compliance
-    logger.info("Synthesizing final structured audit report...")
-    synthesis_contents = list(contents)
-    synthesis_contents.append(
-        types.Content(role="user", parts=[types.Part.from_text(text=VIOLATION_SYNTHESIS_PROMPT)])
-    )
-
-    synthesis_config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_PROMPT,
-        temperature=0.0,
-        response_mime_type="application/json",
-        response_schema=AuditReport
-    )
-
-    synthesis_response = client.models.generate_content(
-        model=model,
-        contents=synthesis_contents,
-        config=synthesis_config
-    )
-
-    try:
-        report_data = json.loads(synthesis_response.text)
-        report = AuditReport.model_validate(report_data)
-    except Exception as e:
-        logger.error(f"Failed to parse synthesis response directly as AuditReport: {e}")
-        # Fallback to empty report with repo url
-        report = AuditReport(repository=repo_url, violations=[])
-
-    clean_report = sanitize_report(report, repo_url)
-    logger.info(f"Audit completed successfully. Found {len(clean_report.violations)} verified violations.")
-    return clean_report
+    raise RuntimeError(f"Audit loop exceeded MAX_ITERATIONS={MAX_ITERATIONS} without producing a report.")

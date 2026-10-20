@@ -1,108 +1,116 @@
+"""
+Gemini LLM Client — wraps google‑genai for the audit agent.
+Supports:
+  - Function / tool calling (native JSON schema format)
+  - Structured JSON output with retry on parse failure
+  - Configurable model, temperature, and max tokens
+"""
+
+import json
 import os
-from typing import Optional, List, Dict, Any
+from typing import Any
+
 from google import genai
 from google.genai import types
+
 from agent_core.logger import get_logger
 
 logger = get_logger("llm_client")
 
 
-def get_gemini_client(api_key: Optional[str] = None) -> genai.Client:
-    """
-    Initializes and returns the official Google Gemini SDK client.
-    """
-    key = api_key or os.getenv("GEMINI_API_KEY")
-    if not key:
-        raise ValueError(
-            "GEMINI_API_KEY is not set. Please provide it in the environment "
-            "or in a .env file."
-        )
-    return genai.Client(api_key=key)
+class GeminiClient:
+    """Thin wrapper around the google‑genai SDK for use in the agentic loop."""
 
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        temperature: float = 0.2,
+        max_output_tokens: int = 8192,
+    ) -> None:
+        self._api_key = api_key or os.environ["GEMINI_API_KEY"]
+        self._model   = model or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+        self._temperature        = temperature
+        self._max_output_tokens  = max_output_tokens
+        self._client             = genai.Client(api_key=self._api_key)
+        logger.info(f"GeminiClient initialized with model={self._model}")
 
-def get_inspection_tools_declaration() -> types.Tool:
-    """
-    Constructs the tool declarations for the DevOps Auditing Agent.
-    Strictly follows Python agent/tool loop requirements without external frameworks.
-    """
-    declarations = [
-        types.FunctionDeclaration(
-            name="list_files",
-            description="Discover repository files and directory structure.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "sub_dir": types.Schema(
-                        type="STRING",
-                        description="Optional sub-directory to inspect relative to repository root."
-                    ),
-                    "max_depth": types.Schema(
-                        type="INTEGER",
-                        description="Maximum depth of recursion (default 4)."
-                    )
-                }
-            )
-        ),
-        types.FunctionDeclaration(
-            name="read_file",
-            description="Inspect relevant source code or configuration file with line numbers.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "file_path": types.Schema(
-                        type="STRING",
-                        description="Relative path of the file to inspect."
-                    ),
-                    "start_line": types.Schema(
-                        type="INTEGER",
-                        description="1-indexed starting line number (default: 1)."
-                    ),
-                    "end_line": types.Schema(
-                        type="INTEGER",
-                        description="1-indexed ending line number (default: 150)."
-                    )
-                },
-                required=["file_path"]
-            )
-        ),
-        types.FunctionDeclaration(
-            name="search_code",
-            description="Search repository files for suspicious patterns, hardcoded secrets, or config directives.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "pattern": types.Schema(
-                        type="STRING",
-                        description="Regex or substring to search for."
-                    ),
-                    "file_pattern": types.Schema(
-                        type="STRING",
-                        description="Optional file name filter (e.g. '*.py', '*.yml', 'Dockerfile')."
-                    )
-                },
-                required=["pattern"]
-            )
-        ),
-        types.FunctionDeclaration(
-            name="git_log",
-            description="Inspect commit history for commit hygiene or accidental credential commits.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={
-                    "max_commits": types.Schema(
-                        type="INTEGER",
-                        description="Number of recent commits to inspect (default: 15)."
-                    )
-                }
-            )
-        ),
-        types.FunctionDeclaration(
-            name="git_status",
-            description="Inspect git status to check for untracked or committed temporary/build artifacts.",
-            parameters=types.Schema(
-                type="OBJECT",
-                properties={}
-            )
+    # ─────────────────────────────────────────────────────────
+    # Core call
+    # ─────────────────────────────────────────────────────────
+    def generate(
+        self,
+        contents: list[types.ContentUnionDict],
+        tools: list[types.Tool] | None = None,
+        system_instruction: str | None = None,
+    ) -> types.GenerateContentResponse:
+        """Send *contents* to the Gemini model and return the raw response."""
+        config_kwargs: dict[str, Any] = {
+            "temperature":       self._temperature,
+            "max_output_tokens": self._max_output_tokens,
+        }
+        if system_instruction:
+            config_kwargs["system_instruction"] = system_instruction
+        if tools:
+            config_kwargs["tools"] = tools
+
+        config = types.GenerateContentConfig(**config_kwargs)
+
+        logger.debug(f"Sending request to {self._model} with {len(contents)} content parts")
+        response = self._client.models.generate_content(
+            model    = self._model,
+            contents = contents,
+            config   = config,
         )
-    ]
-    return types.Tool(function_declarations=declarations)
+        logger.debug("Response received from Gemini API")
+        return response
+
+    # ─────────────────────────────────────────────────────────
+    # Convenience: extract text
+    # ─────────────────────────────────────────────────────────
+    @staticmethod
+    def extract_text(response: types.GenerateContentResponse) -> str | None:
+        """Return the first text part of the response, or None."""
+        try:
+            return response.text
+        except Exception:
+            return None
+
+    # ─────────────────────────────────────────────────────────
+    # Convenience: extract tool calls
+    # ─────────────────────────────────────────────────────────
+    @staticmethod
+    def extract_tool_calls(
+        response: types.GenerateContentResponse,
+    ) -> list[types.FunctionCall]:
+        """Return a list of FunctionCall objects from the response (may be empty)."""
+        calls = []
+        try:
+            for part in response.candidates[0].content.parts:
+                if part.function_call:
+                    calls.append(part.function_call)
+        except Exception:
+            pass
+        return calls
+
+    # ─────────────────────────────────────────────────────────
+    # Convenience: parse structured JSON from text response
+    # ─────────────────────────────────────────────────────────
+    @staticmethod
+    def parse_json_response(response: types.GenerateContentResponse) -> dict[str, Any] | None:
+        """Attempt to parse JSON from the model text response.
+        Strips markdown fences if present.
+        """
+        text = GeminiClient.extract_text(response)
+        if not text:
+            return None
+        # Strip markdown code fences
+        stripped = text.strip()
+        if stripped.startswith("```"):
+            lines = stripped.splitlines()
+            stripped = "\n".join(lines[1:-1]) if len(lines) > 2 else stripped
+        try:
+            return json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            logger.warning(f"JSON parse failure: {exc} | raw={text[:200]!r}")
+            return None

@@ -1,0 +1,55 @@
+{
+  "repository": "https://github.com/example/vulnerable-devops-demo",
+  "violations": [
+    {
+      "rule_id": "SEC-001",
+      "category": "security",
+      "severity": "critical",
+      "file": "config/database.py",
+      "line": 14,
+      "description": "Hardcoded database credential in source code",
+      "evidence": "DB_PASSWORD = '***[REDACTED_SECRET]***'",
+      "recommendation": "Migrate database credentials to environment variables or a secret management vault (e.g., AWS Secrets Manager, HashiCorp Vault)."
+    },
+    {
+      "rule_id": "CI-002",
+      "category": "github_actions_ci",
+      "severity": "high",
+      "file": ".github/workflows/ci.yml",
+      "line": 8,
+      "description": "Dangerous trigger combination with pull_request_target",
+      "evidence": "on: [pull_request_target] followed by checkout of untrusted head branch",
+      "recommendation": "Use the standard 'pull_request' trigger for untrusted forks or restrict checkout to the base repository to prevent workflow PWN exploitation."
+    },
+    {
+      "rule_id": "CI-004",
+      "category": "github_actions_ci",
+      "severity": "medium",
+      "file": ".github/workflows/ci.yml",
+      "line": 1,
+      "description": "Missing explicit least-privilege permissions in GitHub Actions workflow",
+      "evidence": "No top-level 'permissions:' block defined, granting default read/write access to GITHUB_TOKEN",
+      "recommendation": "Define top-level 'permissions: read-all' or specify minimal required scopes (e.g. contents: read) to follow least-privilege principles."
+    },
+    {
+      "rule_id": "DEP-001",
+      "category": "dependency_management",
+      "severity": "medium",
+      "file": "requirements.txt",
+      "line": 3,
+      "description": "Unpinned production dependencies allowing wildcard breaking changes",
+      "evidence": "flask>=2.0.* and requests specified without upper bounds or exact lock",
+      "recommendation": "Pin dependency versions or adopt a lockfile system (e.g. poetry.lock, pip-tools) for deterministic, reproducible builds."
+    },
+    {
+      "rule_id": "HYG-003",
+      "category": "repository_hygiene",
+      "severity": "low",
+      "file": ".DS_Store",
+      "line": null,
+      "description": "OS-generated metadata file tracked in git repository",
+      "evidence": "Tracked binary file '.DS_Store' present in repository index",
+      "recommendation": "Remove '.DS_Store' from git tracking using 'git rm --cached .DS_Store' and add it to the project '.gitignore'."
+    }
+  ]
+}

@@ -67,3 +67,62 @@ def test_invalid_severity():
     }
     with pytest.raises(ValidationError):
         Violation.model_validate(raw_data)
+
+
+def test_violation_secret_scrubbing():
+    """Ensure secrets in evidence, description, and recommendation are automatically masked."""
+    raw_data = {
+        "rule_id": "SEC-001",
+        "category": "security",
+        "severity": "critical",
+        "file": "config.py",
+        "line": 10,
+        "description": "Found key",
+        "evidence": "api_key = 'AIzaSyAH9hJmMgY19omF_SH7F5tispAWCIN2ync'",
+        "recommendation": "Remove ghp_111122223333444455556666777788889999",
+    }
+    v = Violation.model_validate(raw_data)
+    assert "AIzaSyAH9hJmMgY19omF_SH7F5tispAWCIN2ync" not in v.evidence
+    assert "REDACTED_SECRET" in v.evidence
+    assert "ghp_111122223333444455556666777788889999" not in v.recommendation
+    assert "REDACTED_SECRET" in v.recommendation
+
+
+def test_audit_report_deduplication():
+    """Ensure duplicate findings with identical rule_id, file, and line are merged."""
+    v1 = {
+        "rule_id": "SEC-001",
+        "category": "security",
+        "severity": "critical",
+        "file": "config.py",
+        "line": 10,
+        "description": "First instance",
+        "evidence": "evidence 1",
+        "recommendation": "rec 1",
+    }
+    v2 = {
+        "rule_id": "SEC-001",
+        "category": "security",
+        "severity": "critical",
+        "file": "config.py",
+        "line": 10,
+        "description": "Duplicate instance",
+        "evidence": "evidence 2",
+        "recommendation": "rec 2",
+    }
+    v3 = {
+        "rule_id": "SEC-001",
+        "category": "security",
+        "severity": "critical",
+        "file": "config.py",
+        "line": 25,
+        "description": "Different line instance",
+        "evidence": "evidence 3",
+        "recommendation": "rec 3",
+    }
+    report = AuditReport.model_validate({
+        "repository": "https://github.com/example/repo",
+        "violations": [v1, v2, v3],
+    })
+    assert len(report.violations) == 2
+

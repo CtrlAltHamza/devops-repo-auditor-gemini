@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 SeverityLevel = Literal["critical", "high", "medium", "low"]
 
@@ -55,6 +55,15 @@ class Violation(BaseModel):
         description="Actionable, prescriptive remediation steps"
     )
 
+    @model_validator(mode="after")
+    def scrub_secrets(self) -> "Violation":
+        """Defensive guardrail: scrub all secrets/tokens from evidence and descriptions."""
+        from agent_core.logger import SecretScrubbingFilter
+        self.evidence = SecretScrubbingFilter.scrub(self.evidence)
+        self.description = SecretScrubbingFilter.scrub(self.description)
+        self.recommendation = SecretScrubbingFilter.scrub(self.recommendation)
+        return self
+
 
 class AuditReport(BaseModel):
     """
@@ -65,3 +74,17 @@ class AuditReport(BaseModel):
         default_factory=list,
         description="List of detected verified DevOps violations"
     )
+
+    @model_validator(mode="after")
+    def deduplicate_violations(self) -> "AuditReport":
+        """Ensure no duplicate findings exist (same rule_id, file, and line)."""
+        seen: set[tuple[str, str | None, int | None]] = set()
+        unique: list[Violation] = []
+        for v in self.violations:
+            key = (v.rule_id, v.file, v.line)
+            if key not in seen:
+                seen.add(key)
+                unique.append(v)
+        self.violations = unique
+        return self
+

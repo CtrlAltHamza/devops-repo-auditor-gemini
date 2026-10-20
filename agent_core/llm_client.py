@@ -8,6 +8,7 @@ Supports:
 
 import json
 import os
+import re
 from typing import Any
 
 from google import genai
@@ -71,6 +72,19 @@ class GeminiClient:
                 return response
             except Exception as exc:
                 err_str = str(exc)
+                # If a specific model hit its daily project quota, switch to an alternative flash model
+                if "PerDay" in err_str or "GenerateRequestsPerDay" in err_str:
+                    fallbacks = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.7-flash", "gemini-3.5-flash"]
+                    next_models = [m for m in fallbacks if m != self._model]
+                    if next_models:
+                        new_model = next_models[0]
+                        logger.warning(
+                            f"Daily quota reached on {self._model}. Seamlessly failing over to {new_model}..."
+                        )
+                        self._model = new_model
+                        time.sleep(2)
+                        continue
+
                 if ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "503" in err_str) and attempt < max_retries - 1:
                     wait_time = 5 * (attempt + 1)
                     logger.warning(
@@ -79,6 +93,7 @@ class GeminiClient:
                     time.sleep(wait_time)
                 else:
                     raise
+
 
 
     # ─────────────────────────────────────────────────────────
@@ -116,18 +131,40 @@ class GeminiClient:
     @staticmethod
     def parse_json_response(response: types.GenerateContentResponse) -> dict[str, Any] | None:
         """Attempt to parse JSON from the model text response.
-        Strips markdown fences if present.
+        Uses direct parsing, code fence extraction, and outermost JSON object regex matching.
         """
         text = GeminiClient.extract_text(response)
         if not text:
             return None
-        # Strip markdown code fences
         stripped = text.strip()
-        if stripped.startswith("```"):
-            lines = stripped.splitlines()
-            stripped = "\n".join(lines[1:-1]) if len(lines) > 2 else stripped
+
+        # 1. Direct JSON parse
         try:
-            return json.loads(stripped)
-        except json.JSONDecodeError as exc:
-            logger.warning(f"JSON parse failure: {exc} | raw={text[:200]!r}")
-            return None
+            res = json.loads(stripped)
+            if isinstance(res, dict):
+                return res
+        except json.JSONDecodeError:
+            pass
+
+        # 2. Markdown code fence extraction: ```(?:json)? ... ```
+        fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", stripped)
+        if fence_match:
+            try:
+                res = json.loads(fence_match.group(1).strip())
+                if isinstance(res, dict):
+                    return res
+            except json.JSONDecodeError:
+                pass
+
+        # 3. Match outermost JSON object {...}
+        obj_match = re.search(r"(\{[\s\S]*\})", stripped)
+        if obj_match:
+            try:
+                res = json.loads(obj_match.group(1).strip())
+                if isinstance(res, dict):
+                    return res
+            except json.JSONDecodeError:
+                pass
+
+        logger.warning(f"JSON parse failure | raw={text[:200]!r}")
+        return None

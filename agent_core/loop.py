@@ -244,7 +244,25 @@ def run_audit(
             raw_json = client.parse_json_response(response)
             if raw_json is None:
                 text = client.extract_text(response) or ""
-                logger.error(f"Could not parse JSON from model response: {text[:500]!r}")
+                logger.warning(f"Could not parse JSON from model response (iteration {iteration}/{limit}): {text[:300]!r}")
+                if iteration < limit and response.candidates and response.candidates[0].content:
+                    # Append model's response and prompt for JSON report
+                    contents.append(response.candidates[0].content)
+                    contents.append(
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part.from_text(
+                                    text=(
+                                        "Please produce the final JSON audit report now according to the required schema: "
+                                        '{"repository": "' + repo_url + '", "violations": [...]}. '
+                                        "Output ONLY the JSON object, enclosed in a ```json code fence."
+                                    )
+                                )
+                            ],
+                        )
+                    )
+                    continue
                 raise ValueError("Model did not return valid JSON for the audit report.")
 
             logger.info("Audit report parsed successfully")

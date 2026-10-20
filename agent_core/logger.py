@@ -1,7 +1,6 @@
+import logging
 import os
 import re
-import logging
-from typing import Optional
 
 # Regular expression patterns for common sensitive tokens/secrets
 CREDENTIAL_ASSIGNMENT_PATTERN = re.compile(
@@ -53,7 +52,7 @@ class SecretScrubbingFilter(logging.Filter):
         return text
 
 
-def get_logger(name: str = "devops_auditor", level: Optional[str] = None) -> logging.Logger:
+def get_logger(name: str = "devops_auditor", level: str | None = None) -> logging.Logger:
     """
     Configures and returns a structured logger with security filters.
     """

@@ -1,4 +1,5 @@
-from typing import List, Optional, Literal
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 SeverityLevel = Literal["critical", "high", "medium", "low"]
@@ -33,11 +34,11 @@ class Violation(BaseModel):
         ...,
         description="Severity level: critical, high, medium, or low"
     )
-    file: Optional[str] = Field(
+    file: str | None = Field(
         None,
         description="Relative file path where violation occurred, or null if repo-wide"
     )
-    line: Optional[int] = Field(
+    line: int | None = Field(
         None,
         description="1-based line number where violation occurs, or null if inapplicable"
     )
@@ -60,7 +61,7 @@ class AuditReport(BaseModel):
     Final JSON output contract for the DevOps auditing agent.
     """
     repository: str = Field(..., description="The inspected GitHub repository URL")
-    violations: List[Violation] = Field(
+    violations: list[Violation] = Field(
         default_factory=list,
         description="List of detected verified DevOps violations"
     )

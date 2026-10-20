@@ -4,27 +4,26 @@ The loop drives the DevOps audit by letting the Gemini model
 decide which tool to call next and when the audit is complete.
 """
 
-import json
 import os
 from typing import Any
 
 from google.genai import types
 
 from agent_core.llm_client import GeminiClient
-from agent_core.logger     import get_logger
-from agent_core.prompts    import SYSTEM_PROMPT
-from agent_core.schema     import AuditReport
+from agent_core.logger import get_logger
+from agent_core.prompts import SYSTEM_PROMPT
+from agent_core.schema import AuditReport
 from tools import (
-    list_repo_files,
-    read_file_content,
-    search_code,
-    list_commits,
     check_file_exists,
+    git_log,
     git_status,
     inspect_github_actions,
+    list_commits,
     list_files,
+    list_repo_files,
     read_file,
-    git_log,
+    read_file_content,
+    search_code,
 )
 
 logger = get_logger("loop")

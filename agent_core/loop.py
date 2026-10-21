@@ -8,6 +8,7 @@ import os
 from typing import Any
 
 from google.genai import types
+from pydantic import ValidationError
 
 from agent_core.llm_client import GeminiClient
 from agent_core.logger import get_logger
@@ -190,6 +191,7 @@ def run_audit(
     ]
 
     logger.info(f"Starting audit loop for {repo_url} (max_iterations={limit}, model={client._model})")
+    repairing_report = False
 
     for iteration in range(1, limit + 1):
         logger.info(f"─── Iteration {iteration}/{limit} ───")
@@ -214,6 +216,8 @@ def run_audit(
                     ],
                 )
             )
+            tools_for_step = None
+        elif repairing_report:
             tools_for_step = None
         elif iteration == limit - 1:
             contents.append(
@@ -279,7 +283,6 @@ def run_audit(
                 text = client.extract_text(response) or ""
                 logger.warning(f"Could not parse JSON from model response (iteration {iteration}/{limit}): {text[:300]!r}")
                 if iteration < limit and response.candidates and response.candidates[0].content:
-                    # Append model's response and prompt for JSON report
                     contents.append(response.candidates[0].content)
                     contents.append(
                         types.Content(
@@ -287,7 +290,7 @@ def run_audit(
                             parts=[
                                 types.Part.from_text(
                                     text=(
-                                        "Please produce the final JSON audit report now according to the required schema: "
+                                        "Do not call any tools. Please produce the final JSON audit report now according to the required schema: "
                                         '{"repository": "' + repo_url + '", "violations": [...]}. '
                                         "Output ONLY the JSON object, enclosed in a ```json code fence."
                                     )
@@ -295,11 +298,43 @@ def run_audit(
                             ],
                         )
                     )
+                    repairing_report = True
                     continue
                 break
 
-            logger.info("Audit report parsed successfully")
-            return AuditReport(**raw_json)
+            try:
+                report = AuditReport.model_validate(raw_json)
+            except ValidationError as exc:
+                logger.warning(
+                    "Model returned JSON that does not match the audit report schema "
+                    f"(iteration {iteration}/{limit}): {exc}"
+                )
+                if iteration < limit:
+                    if response.candidates and response.candidates[0].content:
+                        contents.append(response.candidates[0].content)
+                    contents.append(
+                        types.Content(
+                            role="user",
+                            parts=[
+                                types.Part.from_text(
+                                    text=(
+                                        "Do not call any tools. Correct the previous response so it matches "
+                                        "the required audit report schema exactly: "
+                                        '{"repository": "' + repo_url + '", "violations": [...]}. '
+                                        f"Validation errors: {exc}. "
+                                        "Keep the gathered findings, use an empty violations array only if "
+                                        "there are genuinely no findings, and output ONLY valid JSON."
+                                    )
+                                )
+                            ],
+                        )
+                    )
+                    repairing_report = True
+                    continue
+                break
+
+            logger.info("Audit report parsed and validated successfully")
+            return report
 
     # If loop ended without parsed report, execute forced final synthesis
     logger.info("Loop ended without report — forcing final report extraction.")
@@ -324,8 +359,14 @@ def run_audit(
     )
     raw_json = client.parse_json_response(final_resp)
     if raw_json is not None:
-        logger.info("Final forced audit report parsed successfully")
-        return AuditReport(**raw_json)
+        try:
+            report = AuditReport.model_validate(raw_json)
+        except ValidationError as exc:
+            logger.error(f"Final model response did not match the audit report schema: {exc}")
+            raise RuntimeError(
+                "Gemini returned JSON that does not satisfy the required audit report schema."
+            ) from exc
+        logger.info("Final forced audit report parsed and validated successfully")
+        return report
 
     raise RuntimeError(f"Audit loop exceeded maximum iterations ({limit}) without producing a report.")
-

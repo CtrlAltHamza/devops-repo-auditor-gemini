@@ -61,6 +61,37 @@ def test_audit_loop_observe_reason_report(tmp_path):
     assert report.violations[0].category == "testing"
 
 
+def test_audit_loop_repairs_report_missing_required_fields(tmp_path):
+    """A parseable but schema-invalid response should be repaired instead of aborting."""
+    invalid_response = MagicMock()
+    invalid_response.candidates[0].content = MagicMock()
+    valid_response = MagicMock()
+    valid_response.candidates[0].content = MagicMock()
+
+    mock_client = MagicMock()
+    mock_client.generate.side_effect = [invalid_response, valid_response]
+    mock_client.extract_tool_calls.return_value = []
+    mock_client.parse_json_response.side_effect = [
+        {},
+        {
+            "repository": "https://github.com/mock/repo",
+            "violations": [],
+        },
+    ]
+
+    with patch("agent_core.loop.GeminiClient", return_value=mock_client):
+        report = run_audit(
+            "https://github.com/mock/repo",
+            str(tmp_path),
+            max_iterations=3,
+        )
+
+    assert report.repository == "https://github.com/mock/repo"
+    assert report.violations == []
+    assert mock_client.generate.call_count == 2
+    assert mock_client.generate.call_args_list[1].kwargs["tools"] is None
+
+
 def test_cli_execution_with_flags(tmp_path, monkeypatch):
     """Test CLI execution using --repo and --output flags."""
     import agent
